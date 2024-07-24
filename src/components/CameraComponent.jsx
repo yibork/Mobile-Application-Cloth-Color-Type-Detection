@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
 import axios from 'axios';
@@ -53,9 +53,37 @@ const CameraComponent = () => {
     getBackCamera();
   }, []);
 
+  const retryCachedUploads = useCallback(async () => {
+    const cachedUploads = JSON.parse(localStorage.getItem('cachedUploads')) || [];
+    if (cachedUploads.length === 0) return;
+
+    const newCachedUploads = [];
+
+    for (const { imageSrc, imageFileName, audioFile, className, uniqueId } of cachedUploads) {
+      const formData = new FormData();
+      formData.append('image', dataURLtoFile(imageSrc, imageFileName));
+
+      const audioBlob = await fetch(audioFile).then(r => r.blob());
+      formData.append('audio', audioBlob, `${className}.${uniqueId}.mp3`);
+
+      try {
+        await axios.post('http://localhost:8000/upload_feedback/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      } catch (error) {
+        console.error('Error uploading cached feedback:', error);
+        newCachedUploads.push({ imageSrc, imageFileName, audioFile, className, uniqueId });
+      }
+    }
+
+    localStorage.setItem('cachedUploads', JSON.stringify(newCachedUploads));
+  }, []);
+
   useEffect(() => {
     retryCachedUploads();
-  }, []);
+  }, [retryCachedUploads]);
 
   const capture = () => {
     if (webcamRef.current) {
@@ -168,34 +196,6 @@ const CameraComponent = () => {
     reader.readAsDataURL(audioFile);
   };
 
-  const retryCachedUploads = async () => {
-    const cachedUploads = JSON.parse(localStorage.getItem('cachedUploads')) || [];
-    if (cachedUploads.length === 0) return;
-
-    const newCachedUploads = [];
-
-    for (const { imageSrc, imageFileName, audioFile, className, uniqueId } of cachedUploads) {
-      const formData = new FormData();
-      formData.append('image', dataURLtoFile(imageSrc, imageFileName));
-
-      const audioBlob = await fetch(audioFile).then(r => r.blob());
-      formData.append('audio', audioBlob, `${className}.${uniqueId}.mp3`);
-
-      try {
-        await axios.post('http://localhost:8000/upload_feedback/', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-      } catch (error) {
-        console.error('Error uploading cached feedback:', error);
-        newCachedUploads.push({ imageSrc, imageFileName, audioFile, className, uniqueId });
-      }
-    }
-
-    localStorage.setItem('cachedUploads', JSON.stringify(newCachedUploads));
-  };
-
   useEffect(() => {
     const interval = setInterval(() => {
       if (navigator.onLine) {
@@ -203,13 +203,13 @@ const CameraComponent = () => {
       }
     }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [retryCachedUploads]);
 
   return (
     <div className="w-full max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-md">
       <h1 className="text-2xl font-bold mb-4 text-center">Clothing Item Detector</h1>
       <p className="mb-6 text-gray-700 text-center">
-        This application uses  device's camera to detect and classify clothing items.
+        This application uses your device's camera to detect and classify clothing items.
         The identified item will be announced via audio description.
       </p>
       <div className="mb-4">
