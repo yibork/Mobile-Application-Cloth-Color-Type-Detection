@@ -36,7 +36,7 @@ const updateModel = async () => {
   try {
     const response = await axios.get('http://localhost:8000/download-model', { responseType: 'blob' });
     const zip = await JSZip.loadAsync(response.data);
-    const publicDir = '/public/';
+    // const publicDir = '/public/';
 
     const updateFile = async (fileName) => {
       const fileData = await zip.file(fileName).async('blob');
