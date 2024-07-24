@@ -1,5 +1,9 @@
 {
   "projects": {
-    "default": "landfill-detection"
-  }
+    "default": "clothcolortype",
+    "clothcolortype": "clothcolortype"
+  },
+  "targets": {},
+  "etags": {},
+  "dataconnectEmulatorConfig": {}
 }

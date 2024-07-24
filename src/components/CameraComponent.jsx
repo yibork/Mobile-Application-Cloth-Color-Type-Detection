@@ -2,7 +2,6 @@ import React, { useRef, useState, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
 import axios from 'axios';
-import JSZip from 'jszip';
 import { ReactMediaRecorder } from 'react-media-recorder';
 
 const classNames = [
@@ -28,7 +27,6 @@ const CameraComponent = () => {
   const [imageSrc, setImageSrc] = useState(null);
   const mediaRecorderRef = useRef(null);
   const [className, setClassName] = useState('');
-  const [devices, setDevices] = useState([]);
   const [deviceId, setDeviceId] = useState('');
 
   useEffect(() => {
@@ -44,25 +42,20 @@ const CameraComponent = () => {
   }, []);
 
   useEffect(() => {
-    const getDevices = async () => {
+    const getBackCamera = async () => {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      setDevices(videoDevices);
-      if (videoDevices.length > 0) {
-        setDeviceId(videoDevices[0].deviceId);
+      const backCamera = videoDevices.find(device => device.label.toLowerCase().includes('back')) || videoDevices[0];
+      if (backCamera) {
+        setDeviceId(backCamera.deviceId);
       }
     };
-    getDevices();
+    getBackCamera();
   }, []);
 
   useEffect(() => {
-    // Retry uploading cached data on page load
     retryCachedUploads();
   }, []);
-
-  const handleDeviceChange = (event) => {
-    setDeviceId(event.target.value);
-  };
 
   const capture = () => {
     if (webcamRef.current) {
@@ -84,14 +77,9 @@ const CameraComponent = () => {
       const maxIndex = predictionArray.indexOf(Math.max(...predictionArray));
       const predictedClass = classNames[maxIndex];
       setClassName(predictedClass);
-      const uniqueId = generateUniqueId();
       playAudioFile(predictedClass);
-      startRecordingFeedback(predictedClass, uniqueId);
+      startRecordingFeedback(predictedClass);
     };
-  };
-
-  const generateUniqueId = () => {
-    return Math.random().toString(36).substr(2, 9);
   };
 
   const playAudioFile = (className) => {
@@ -108,55 +96,33 @@ const CameraComponent = () => {
         audio.play().catch(error => {
           console.error("Error playing audio:", error);
         });
-        setTimeout(() => {
-          audio.pause();
-        }, 20000); 
       })
       .catch(error => {
         console.error("Failed to load audio file:", error);
       });
   };
 
-  const handleFeedbackSubmit = async (blobUrl, className, uniqueId) => {
+  const handleFeedbackSubmit = async (blobUrl, className) => {
+    const uniqueId = Math.random().toString(36).substr(2, 9);
     const imageFileName = `${className}.${uniqueId}.jpg`;
     const formData = new FormData();
     formData.append('image', dataURLtoFile(imageSrc, imageFileName));
-  
+
     const audioFile = await fetch(blobUrl).then(r => r.blob());
     const mimeType = audioFile.type;
-  
-    let audioExtension;
-
-    switch (mimeType) {
-      
-      case 'audio/mpeg':
-        audioExtension = 'mp3';
-        break;
-      case 'audio/wav':
-        audioExtension = 'wav';
-        break;
-      case 'audio/ogg':
-        audioExtension = 'ogg';
-        break;
-      default:
-        console.error('Unsupported audio format:', mimeType);
-        return;
-    }
-  
+    const audioExtension = mimeType.split('/')[1];
     const audioFileName = `${className}.${uniqueId}.${audioExtension}`;
     formData.append('audio', audioFile, audioFileName);
 
     try {
-      const response = await axios.post('http://localhost:8000/upload_feedback/', formData, {
+      await axios.post('http://localhost:8000/upload_feedback/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      console.log(response.data);
     } catch (error) {
       console.error('Error uploading feedback:', error);
-      // Cache the failed upload
-      cacheFailedUpload({ imageSrc, imageFileName, audioFile: audioFile, className, uniqueId });
+      cacheFailedUpload({ imageSrc, imageFileName, audioFile, className, uniqueId });
     }
   };
 
@@ -175,14 +141,14 @@ const CameraComponent = () => {
     return new File([u8arr], filename, { type: mime });
   };
 
-  const startRecordingFeedback = (className, uniqueId) => {
+  const startRecordingFeedback = (className) => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.startRecording) {
       mediaRecorderRef.current.startRecording();
       setTimeout(() => {
         if (mediaRecorderRef.current.stopRecording) {
           mediaRecorderRef.current.stopRecording();
         }
-      }, 20000); // Automatically stop recording after 20 seconds
+      }, 20000);
     }
   };
 
@@ -197,7 +163,6 @@ const CameraComponent = () => {
         className,
         uniqueId,
       });
-      
       localStorage.setItem('cachedUploads', JSON.stringify(cachedUploads));
     };
     reader.readAsDataURL(audioFile);
@@ -217,12 +182,11 @@ const CameraComponent = () => {
       formData.append('audio', audioBlob, `${className}.${uniqueId}.mp3`);
 
       try {
-        const response = await axios.post('http://localhost:8000/upload_feedback/', formData, {
+        await axios.post('http://localhost:8000/upload_feedback/', formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
         });
-        console.log('Cached upload success:', response.data);
       } catch (error) {
         console.error('Error uploading cached feedback:', error);
         newCachedUploads.push({ imageSrc, imageFileName, audioFile, className, uniqueId });
@@ -233,7 +197,6 @@ const CameraComponent = () => {
   };
 
   useEffect(() => {
-    // Check internet connection and retry cached uploads every minute
     const interval = setInterval(() => {
       if (navigator.onLine) {
         retryCachedUploads();
@@ -242,78 +205,46 @@ const CameraComponent = () => {
     return () => clearInterval(interval);
   }, []);
 
-  const updateModel = async () => {
-    try {
-      const response = await axios.get('http://localhost:8000/download-model', { responseType: 'blob' });
-      const zip = await JSZip.loadAsync(response.data);
-      const publicDir = '/public/';
-
-      const updateFile = async (fileName) => {
-        const fileData = await zip.file(fileName).async('blob');
-        const fileUrl = window.URL.createObjectURL(fileData);
-        const link = document.createElement('a');
-        link.href = fileUrl;
-        link.setAttribute('download', fileName);
-        document.body.appendChild(link);
-        link.click();
-        link.parentNode.removeChild(link);
-      };
-
-      await updateFile('model.json');
-      await updateFile('group1-shard1of1.bin');
-
-      alert('Model updated successfully.');
-    } catch (error) {
-      console.error('Error downloading model:', error);
-      alert('Failed to update model.');
-    }
-  };
-
   return (
-    <div className="w-full max-w-xs flex flex-col items-center">
-      <Webcam
-        audio={false}
-        ref={webcamRef}
-        screenshotFormat="image/jpeg"
-        videoConstraints={{ deviceId }}
-        className="rounded-lg shadow-md mb-4"
-      />
-      <div className="flex flex-col space-y-2 w-full">
+    <div className="w-full max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-md">
+      <h1 className="text-2xl font-bold mb-4 text-center">Clothing Item Detector</h1>
+      <p className="mb-6 text-gray-700 text-center">
+        This application uses  device's camera to detect and classify clothing items.
+        The identified item will be announced via audio description.
+      </p>
+      <div className="mb-4">
+        <Webcam
+          audio={false}
+          ref={webcamRef}
+          screenshotFormat="image/jpeg"
+          videoConstraints={{ deviceId }}
+          className="rounded-lg shadow-md w-full"
+          aria-label="Webcam view"
+        />
+      </div>
+      <div className="flex flex-col space-y-4">
         <button
           onClick={capture}
-          className="bg-green-500 text-white py-2 px-4 rounded shadow hover:bg-green-600"
+          className="bg-blue-600 text-white py-2 px-4 rounded-lg shadow hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          aria-label="Capture Photo"
         >
           Capture Photo
         </button>
-        <select
-          className="bg-gray-200 text-black py-2 px-4 rounded shadow"
-          value={deviceId}
-          onChange={handleDeviceChange}
-        >
-          {devices.map((device, index) => (
-            <option key={index} value={device.deviceId}>
-              {device.label || `Camera ${index + 1}`}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={updateModel}
-          className="bg-blue-500 text-white py-2 px-4 rounded shadow hover:bg-blue-600 mt-4"
-        >
-          Update Model
-        </button>
+        {className && (
+          <p className="text-lg text-center text-gray-800">
+            Detected Item: <strong>{className.replace('_', ' ')}</strong>
+          </p>
+        )}
       </div>
       <ReactMediaRecorder
         audio
         render={({ startRecording, stopRecording }) => {
-          // Store the start and stop recording functions in the ref
           mediaRecorderRef.current = { startRecording, stopRecording };
-          return <div><audio controls /></div>;
+          return null;
         }}
         onStop={(blobUrl) => {
           if (imageSrc && className) {
-            const uniqueId = generateUniqueId();
-            handleFeedbackSubmit(blobUrl, className, uniqueId);
+            handleFeedbackSubmit(blobUrl, className);
           }
         }}
       />
