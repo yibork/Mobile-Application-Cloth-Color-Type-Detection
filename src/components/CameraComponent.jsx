@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import * as tf from '@tensorflow/tfjs';
 import axios from 'axios';
@@ -51,6 +51,34 @@ const CameraComponent = () => {
       }
     };
     getBackCamera();
+  }, []);
+
+  const retryCachedUploads = useCallback(async () => {
+    const cachedUploads = JSON.parse(localStorage.getItem('cachedUploads')) || [];
+    if (cachedUploads.length === 0) return;
+
+    const newCachedUploads = [];
+
+    for (const { imageSrc, imageFileName, audioFile, className, uniqueId } of cachedUploads) {
+      const formData = new FormData();
+      formData.append('image', dataURLtoFile(imageSrc, imageFileName));
+
+      const audioBlob = await fetch(audioFile).then(r => r.blob());
+      formData.append('audio', audioBlob, `${className}.${uniqueId}.mp3`);
+
+      try {
+        await axios.post('http://localhost:8000/upload_feedback/', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      } catch (error) {
+        console.error('Error uploading cached feedback:', error);
+        newCachedUploads.push({ imageSrc, imageFileName, audioFile, className, uniqueId });
+      }
+    }
+
+    localStorage.setItem('cachedUploads', JSON.stringify(newCachedUploads));
   }, []);
 
   useEffect(() => {
@@ -166,34 +194,6 @@ const CameraComponent = () => {
       localStorage.setItem('cachedUploads', JSON.stringify(cachedUploads));
     };
     reader.readAsDataURL(audioFile);
-  };
-
-  const retryCachedUploads = async () => {
-    const cachedUploads = JSON.parse(localStorage.getItem('cachedUploads')) || [];
-    if (cachedUploads.length === 0) return;
-
-    const newCachedUploads = [];
-
-    for (const { imageSrc, imageFileName, audioFile, className, uniqueId } of cachedUploads) {
-      const formData = new FormData();
-      formData.append('image', dataURLtoFile(imageSrc, imageFileName));
-
-      const audioBlob = await fetch(audioFile).then(r => r.blob());
-      formData.append('audio', audioBlob, `${className}.${uniqueId}.mp3`);
-
-      try {
-        await axios.post('http://localhost:8000/upload_feedback/', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-      } catch (error) {
-        console.error('Error uploading cached feedback:', error);
-        newCachedUploads.push({ imageSrc, imageFileName, audioFile, className, uniqueId });
-      }
-    }
-
-    localStorage.setItem('cachedUploads', JSON.stringify(newCachedUploads));
   };
 
   useEffect(() => {
