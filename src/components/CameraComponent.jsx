@@ -55,7 +55,7 @@ const CameraComponent = () => {
 
   useEffect(() => {
     retryCachedUploads();
-  }, []);
+  }, [retryCachedUploads]);
 
   const capture = () => {
     if (webcamRef.current) {
@@ -203,13 +203,13 @@ const CameraComponent = () => {
       }
     }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [retryCachedUploads]);
 
   return (
     <div className="w-full max-w-md mx-auto mt-10 p-6 bg-white rounded-lg shadow-md">
       <h1 className="text-2xl font-bold mb-4 text-center">Clothing Item Detector</h1>
       <p className="mb-6 text-gray-700 text-center">
-        This application uses  device's camera to detect and classify clothing items.
+        This application uses your device's camera to detect and classify clothing items.
         The identified item will be announced via audio description.
       </p>
       <div className="mb-4">
