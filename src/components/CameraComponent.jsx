@@ -28,6 +28,7 @@ const CameraComponent = () => {
   const mediaRecorderRef = useRef(null);
   const [className, setClassName] = useState('');
   const [deviceId, setDeviceId] = useState('');
+  const [devices, setDevices] = useState([]);
 
   useEffect(() => {
     const loadModel = async () => {
@@ -40,18 +41,31 @@ const CameraComponent = () => {
     };
     loadModel();
   }, []);
-
   useEffect(() => {
-    const getBackCamera = async () => {
+    async function checkPermissions() {
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        getVideoDevices(); // Call to load cameras after permissions are granted
+      } catch (error) {
+        console.error('Access denied for camera:', error);
+      }
+    }
+    checkPermissions();
+  }, []);
+  
+  const getVideoDevices = async () => {
+    try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      const backCamera = videoDevices.find(device => device.label.toLowerCase().includes('back')) || videoDevices[0];
-      if (backCamera) {
-        setDeviceId(backCamera.deviceId);
+      setDevices(videoDevices);
+      if (videoDevices.length > 0 && !deviceId) {
+        setDeviceId(videoDevices[0].deviceId); // Set default camera if not already set
       }
-    };
-    getBackCamera();
-  }, []);
+    } catch (error) {
+      console.error('Error accessing media devices:', error);
+    }
+  };
+  
 
   const retryCachedUploads = useCallback(async () => {
     const cachedUploads = JSON.parse(localStorage.getItem('cachedUploads')) || [];
@@ -88,9 +102,13 @@ const CameraComponent = () => {
   const capture = () => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
-      setImageSrc(imageSrc);
-      if (model) {
-        predict(imageSrc);
+      if (imageSrc) {
+        setImageSrc(imageSrc);
+        if (model) {
+          predict(imageSrc);
+        }
+      } else {
+        console.error("Failed to capture image. ImageSrc is null.");
       }
     }
   };
@@ -133,6 +151,13 @@ const CameraComponent = () => {
   const handleFeedbackSubmit = async (blobUrl, className) => {
     const uniqueId = Math.random().toString(36).substr(2, 9);
     const imageFileName = `${className}.${uniqueId}.jpg`;
+
+    // Check if imageSrc is not null before proceeding
+    if (!imageSrc) {
+      console.error("No image captured. ImageSrc is null.");
+      return;
+    }
+
     const formData = new FormData();
     formData.append('image', dataURLtoFile(imageSrc, imageFileName));
 
@@ -212,6 +237,22 @@ const CameraComponent = () => {
         This application uses your device's camera to detect and classify clothing items.
         The identified item will be announced via audio description.
       </p>
+      <div className="mb-4">
+        <label htmlFor="cameraSelect" className="block text-sm font-medium text-gray-700">
+          Choose Camera
+        </label>
+        <select
+          id="cameraSelect"
+          onChange={(e) => setDeviceId(e.target.value)}
+          className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+        >
+          {devices.map((device, index) => (
+            <option key={device.deviceId} value={device.deviceId}>
+              {device.label || `Camera ${index + 1}`}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="mb-4">
         <Webcam
           audio={false}
