@@ -1,24 +1,16 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
-import * as tf from '@tensorflow/tfjs';
-import axios from 'axios';
 import { ReactMediaRecorder } from 'react-media-recorder';
+import { loadModel, predictImage } from './modelService';
+import { checkPermissions, getVideoDevices } from './mediaService';
+import { uploadFeedback } from './feedbackService';
+import { playAudioFile, dataURLtoFile } from './audioService';
 
 const classNames = [
-  "black_dress",
-  "black_pants",
-  "black_shirt",
-  "black_shoes",
-  "black_shorts",
-  "blue_dress",
-  "blue_pants",
-  "blue_shirts",
-  "blue_shorts",
-  "red_dress",
-  "red_pants",
-  "red_shoes",
-  "white_dress",
-  "white_pants"
+  "black_dress", "black_pants", "black_shirt", "black_shoes",
+  "black_shorts", "blue_dress", "blue_pants", "blue_shirts",
+  "blue_shorts", "red_dress", "red_pants", "red_shoes",
+  "white_dress", "white_pants"
 ];
 
 const CameraComponent = () => {
@@ -31,41 +23,15 @@ const CameraComponent = () => {
   const [devices, setDevices] = useState([]);
 
   useEffect(() => {
-    const loadModel = async () => {
-      try {
-        const loadedModel = await tf.loadLayersModel('model.json');
-        setModel(loadedModel);
-      } catch (error) {
-        console.error("Failed to load model:", error);
-      }
-    };
-    loadModel();
+    loadModel().then(setModel).catch(console.error);
   }, []);
+
   useEffect(() => {
-    async function checkPermissions() {
-      try {
-        await navigator.mediaDevices.getUserMedia({ video: true });
-        getVideoDevices(); // Call to load cameras after permissions are granted
-      } catch (error) {
-        console.error('Access denied for camera:', error);
-      }
-    }
-    checkPermissions();
+    checkPermissions()
+      .then(getVideoDevices)
+      .then(setDevices)
+      .catch(console.error);
   }, []);
-  
-  const getVideoDevices = async () => {
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      setDevices(videoDevices);
-      if (videoDevices.length > 0 && !deviceId) {
-        setDeviceId(videoDevices[0].deviceId); // Set default camera if not already set
-      }
-    } catch (error) {
-      console.error('Error accessing media devices:', error);
-    }
-  };
-  
 
   const retryCachedUploads = useCallback(async () => {
     const cachedUploads = JSON.parse(localStorage.getItem('cachedUploads')) || [];
@@ -81,13 +47,8 @@ const CameraComponent = () => {
       formData.append('audio', audioBlob, `${className}.${uniqueId}.mp3`);
 
       try {
-        await axios.post('http://localhost:8000/upload_feedback/', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
+        await uploadFeedback(formData);
       } catch (error) {
-        console.error('Error uploading cached feedback:', error);
         newCachedUploads.push({ imageSrc, imageFileName, audioFile, className, uniqueId });
       }
     }
@@ -105,7 +66,13 @@ const CameraComponent = () => {
       if (imageSrc) {
         setImageSrc(imageSrc);
         if (model) {
-          predict(imageSrc);
+          predictImage(model, imageSrc, classNames)
+            .then(predictedClass => {
+              setClassName(predictedClass);
+              playAudioFile(predictedClass);
+              startRecordingFeedback(predictedClass);
+            })
+            .catch(console.error);
         }
       } else {
         console.error("Failed to capture image. ImageSrc is null.");
@@ -113,46 +80,10 @@ const CameraComponent = () => {
     }
   };
 
-  const predict = async (imageSrc) => {
-    const img = new Image();
-    img.src = imageSrc;
-    img.onload = async () => {
-      const tensor = tf.browser.fromPixels(img).resizeBilinear([224, 224]).expandDims(0).toFloat().div(255);
-      const prediction = await model.predict(tensor).data();
-      const predictionArray = Array.from(prediction);
-      const maxIndex = predictionArray.indexOf(Math.max(...predictionArray));
-      const predictedClass = classNames[maxIndex];
-      setClassName(predictedClass);
-      playAudioFile(predictedClass);
-      startRecordingFeedback(predictedClass);
-    };
-  };
-
-  const playAudioFile = (className) => {
-    const audioFile = `/voice_predictions/${className}.mp3`;
-    fetch(audioFile)
-      .then(response => {
-        if (!response.ok) {
-          throw new Error('Audio file is corrupted or does not exist.');
-        }
-        return response.blob();
-      })
-      .then(blob => {
-        const audio = new Audio(URL.createObjectURL(blob));
-        audio.play().catch(error => {
-          console.error("Error playing audio:", error);
-        });
-      })
-      .catch(error => {
-        console.error("Failed to load audio file:", error);
-      });
-  };
-
   const handleFeedbackSubmit = async (blobUrl, className) => {
     const uniqueId = Math.random().toString(36).substr(2, 9);
     const imageFileName = `${className}.${uniqueId}.jpg`;
 
-    // Check if imageSrc is not null before proceeding
     if (!imageSrc) {
       console.error("No image captured. ImageSrc is null.");
       return;
@@ -168,30 +99,10 @@ const CameraComponent = () => {
     formData.append('audio', audioFile, audioFileName);
 
     try {
-      await axios.post('http://localhost:8000/upload_feedback/', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      await uploadFeedback(formData);
     } catch (error) {
-      console.error('Error uploading feedback:', error);
       cacheFailedUpload({ imageSrc, imageFileName, audioFile, className, uniqueId });
     }
-  };
-
-  const dataURLtoFile = (dataurl, filename) => {
-    if (!dataurl) {
-      throw new Error("Data URL is null");
-    }
-    const arr = dataurl.split(',');
-    const mime = arr[0].match(/:(.*?);/)[1];
-    const bstr = atob(arr[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    return new File([u8arr], filename, { type: mime });
   };
 
   const startRecordingFeedback = (className) => {
